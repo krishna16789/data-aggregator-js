@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSV Processor</title>
+</head>
+<body>
+    <h1>CSV Processor</h1>
+    SUT file: <input type="file" id="supDataFile" accept=".csv" />
+    Person Files: <input type="file" id="personDataFiles" multiple accept=".csv" />
+    <button onclick="processFiles()">Process Files</button>
+
+    <br><br>
+    <a id="downloadLinkHours" style="display: none;">Download Result (Hours)</a>
+    <br><br>
+    <a id="downloadLinkPercentage" style="display: none;">Download Result (Percentage)</a>
+
+    <script>
+        const COMMA_DELIMITER = ',';
+        const PERCENTAGE_AGGREGATION = 'Percentage';
+        const HOURS_AGGREGATION = 'In hours';
+
+        let supData;
+        let levelMap, level1Map, level2Map;
+
+        async function processFiles() {
+            const supDataFile = document.getElementById('supDataFile').files[0];
+            const personDataFiles = document.getElementById('personDataFiles').files;
+
+            if (!supDataFile || personDataFiles.length === 0) {
+                alert("Please upload both SUP data file and person data files.");
+                return;
+            }
+
+            supData = await getRecordsFromFile(supDataFile);
+            levelMap = populateMap(supData, 'SUP');
+            level1Map = populateMap(supData, 'SUP_LEVEL_1');
+            level2Map = populateMap(supData, 'SUP_LEVEL_2');
+
+            const res = {};
+            const dateKeys = new Set();
+
+            for (const personFile of personDataFiles) {
+                const personData = await getRecordsFromFile(personFile);
+
+                for (let i = 1; i < personData.length; i++) {
+                    for (let j = 1; j < personData[0].length; j++) {
+                        const key = personFile.name.replace('_volume_data.csv', '');
+
+                        let value, dateKey;
+                        if (personData[0][j].includes('LEVEL_1')) {
+                            value = Number(personData[i][j]) * level1Map[personData[i][0]];
+                            dateKey = personData[0][j].replace('_LEVEL_1', '').trim();
+                        } else if (personData[0][j].includes('LEVEL_2')) {
+                            value = Number(personData[i][j]) * level2Map[personData[i][0]];
+                            dateKey = personData[0][j].replace('_LEVEL_2', '').trim();
+                        } else {
+                            value = Number(personData[i][j]) * levelMap[personData[i][0]];
+                            dateKey = personData[0][j].trim();
+                        }
+
+                        dateKeys.add(dateKey);
+                        //console.log(JSON.stringify(res));
+                        populateResultMap(res, key, dateKey, value);
+                    }
+                }
+            }
+
+            console.log('Total Count of minutes:', res);
+
+            const writableStreamHours = convertToWritableList(res, Array.from(dateKeys), HOURS_AGGREGATION);
+            const writableStreamPercentage = convertToWritableList(res, Array.from(dateKeys), PERCENTAGE_AGGREGATION);
+
+            downloadCSV(writableStreamHours, "result_hours.csv", "downloadLinkHours");
+            downloadCSV(writableStreamPercentage, "result_percentage.csv", "downloadLinkPercentage");
+        }
+
+        function getRecordsFromFile(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    const text = event.target.result;
+                    const records = text.split('\r\n').map(line => line.split(COMMA_DELIMITER));
+                    resolve(records);
+                };
+                reader.onerror = reject;
+                reader.readAsText(file);
+            });
+        }
+
+        function populateMap(supData, key) {
+            const index = supData[0].indexOf(key);
+            const res = {};
+            for (let i = 1; i < supData.length; i++) {
+                res[supData[i][0]] = Number(supData[i][index]);
+            }
+            return res;
+        }
+
+        function populateResultMap(res, key, dateKey, value) {
+            if (!res[key]) {
+                res[key] = {};
+            }
+            res[key][dateKey] = (res[key][dateKey] || 0) + value;
+        }
+
+        function convertToWritableList(res, dateKeys, aggregationType) {
+            const result = [];
+            const columns = dateKeys.sort((a, b) => parseDate(a) - parseDate(b));
+            columns.unshift('');
+
+            result.push(columns);
+
+            Object.keys(res).forEach(key => {
+                const temp = [key];
+                for (let i = 1; i < columns.length; i++) {
+                    if (res[key].hasOwnProperty(columns[i])) {
+                        let value = res[key][columns[i]];
+                        if (aggregationType === PERCENTAGE_AGGREGATION) {
+                            value = (value / 480) * 100;
+                        } else {
+                            value = value / 60;
+                        }
+                        temp.push(value.toString());
+                    } else {
+                        temp.push('0');
+                    }
+                }
+                result.push(temp);
+            });
+
+            return result;
+        }
+
+        function parseDate(a) {
+            return new Date(a.split('/').reverse().join('-')).getTime();
+        }
+
+        function downloadCSV(data, filename, linkId) {
+            const csvContent = data.map(e => e.join(COMMA_DELIMITER)).join("\n");
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.getElementById(linkId);
+
+            if (navigator.msSaveBlob) { // For IE 10+
+                navigator.msSaveBlob(blob, filename);
+            } else {
+                const url = URL.createObjectURL(blob);
+                link.href = url;
+                link.download = filename;
+                link.style.display = 'inline';
+            }
+        }
+    </script>
+</body>
+</html>
